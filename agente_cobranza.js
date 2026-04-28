@@ -96,7 +96,7 @@ Con gusto te ayudo a resolver esto.
 // API HELPERS
 // ================================================================
 async function buscarCliente(proyectoId) {
-  const url = `${BASE_DESK}/clients/?page=1&quickfiltersearch=${proyectoId}&pagesize=5&buttonFilter=`;
+  const url = `${BASE_DESK}/clients/?page=1&filterModel=%7B%7D&quickfiltersearch=${proyectoId}&pagesize=27&buttonFilter=completeClients`;
   const res = await fetch(url, { headers: H });
   if (!res.ok) throw new Error(`HTTP ${res.status} buscando cliente ${proyectoId}`);
   return res.json();
