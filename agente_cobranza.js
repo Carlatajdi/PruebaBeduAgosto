@@ -7,8 +7,8 @@
 
 const CONFIG = {
   TOKEN: 'mEiTF63m2M0JSpFnnyunvY1AqyCa3m',
-  INSTALLER_ID: 2,
-  DRY_RUN: true,   // ← cambiar a false para enviar de verdad
+  USER_ID: 61736,   // ID fijo de la cuenta de Carla en el chat
+  DRY_RUN: true,    // ← cambiar a false para enviar de verdad
   DELAY_MS: 2000,
 };
 
@@ -102,12 +102,6 @@ async function buscarCliente(proyectoId) {
   return res.json();
 }
 
-async function obtenerChat(clienteId) {
-  const url = `${BASE_DESK}/chats?clientID=${clienteId}&installerID=${CONFIG.INSTALLER_ID}&use_loading=false`;
-  const res = await fetch(url, { headers: H });
-  if (!res.ok) throw new Error(`HTTP ${res.status} obteniendo chat de ${clienteId}`);
-  return res.json();
-}
 
 async function enviarMensaje(roomId, userId, mensaje) {
   if (CONFIG.DRY_RUN) {
@@ -131,37 +125,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // ================================================================
 // EXTRAE room_id y user_id de la respuesta del chat
 // ================================================================
-function extraerChatIds(chatData) {
-  // Intenta distintos formatos de respuesta
-  if (chatData.room_id && chatData.user_id) {
-    return { roomId: chatData.room_id, userId: chatData.user_id };
-  }
-  if (Array.isArray(chatData) && chatData.length > 0) {
-    const c = chatData[0];
-    if (c.room_id && c.user_id) return { roomId: c.room_id, userId: c.user_id };
-  }
-  if (chatData.results && chatData.results.length > 0) {
-    const c = chatData.results[0];
-    if (c.room_id && c.user_id) return { roomId: c.room_id, userId: c.user_id };
+// room_id = installation_ia del cliente (confirmado: room_ia_id === installation_ia)
+function extraerRoomId(searchData) {
+  const results = searchData.result || searchData.results || searchData;
+  if (Array.isArray(results) && results.length > 0) {
+    return results[0].installation_ia;
   }
   return null;
-}
-
-// ================================================================
-// EXTRAE el ID interno del cliente desde la búsqueda
-// ================================================================
-function extraerClienteId(searchData, proyectoId) {
-  const results = searchData.results || searchData;
-  if (Array.isArray(results) && results.length > 0) {
-    // Preferir el que coincide exactamente con el proyecto ID
-    const match = results.find(r =>
-      r.project_id === proyectoId ||
-      r.id === proyectoId ||
-      String(r.project_id) === String(proyectoId)
-    ) || results[0];
-    return match.client_id || match.clientid || match.id;
-  }
-  return proyectoId; // fallback: usar el proyecto ID directamente
 }
 
 // ================================================================
@@ -178,28 +148,19 @@ async function procesarCliente(cliente) {
   console.log(`%c\n🔄 Procesando: ${tag}`, 'color: dodgerblue; font-weight: bold');
 
   try {
-    // 1. Buscar cliente y obtener ID interno
+    // 1. Buscar cliente → obtener installation_ia como room_id
     const searchData = await buscarCliente(cliente.proyectoId);
-    console.log(`   📋 Búsqueda:`, searchData);
+    const roomId = extraerRoomId(searchData);
 
-    const clienteId = extraerClienteId(searchData, cliente.proyectoId);
-    console.log(`   🆔 clienteId a usar en chat: ${clienteId}`);
-
-    // 2. Obtener datos del chat (room_id, user_id)
-    const chatData = await obtenerChat(clienteId);
-    console.log(`   💬 Chat data:`, chatData);
-
-    const ids = extraerChatIds(chatData);
-    if (!ids) {
-      console.warn(`   ⚠️  No se encontró room_id/user_id en la respuesta del chat`);
-      console.warn(`   ℹ️  Estructura recibida:`, JSON.stringify(chatData));
-      return { id: cliente.proyectoId, nombre: cliente.nombre, status: '❌ Sin room_id/user_id' };
+    if (!roomId) {
+      console.warn(`   ⚠️  No se encontró installation_ia para ${cliente.proyectoId}`);
+      return { id: cliente.proyectoId, nombre: cliente.nombre, status: '❌ Sin room_id' };
     }
 
-    console.log(`   ✉️  room_id=${ids.roomId} | user_id=${ids.userId}`);
+    console.log(`   ✉️  room_id=${roomId} | user_id=${CONFIG.USER_ID}`);
 
-    // 3. Enviar mensaje
-    const resultado = await enviarMensaje(ids.roomId, ids.userId, cliente.mensaje);
+    // 2. Enviar mensaje
+    const resultado = await enviarMensaje(roomId, CONFIG.USER_ID, cliente.mensaje);
     console.log(`   ✅ Respuesta envío:`, resultado);
 
     return { id: cliente.proyectoId, nombre: cliente.nombre, status: '✅ Enviado' };
