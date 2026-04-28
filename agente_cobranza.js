@@ -29,7 +29,8 @@ const CLIENTES = [
     proyectoId: 55313,
     nombre: 'Juan',
     escenario: 'C',
-    aprobado: true,
+    aprobado: false,
+    nota: '✅ Mensaje ya enviado el 28/04/2026',
     mensaje:
 `Hola Juan, soy Carla de Solfium 👋
 
