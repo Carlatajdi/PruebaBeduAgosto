@@ -1,0 +1,238 @@
+// ================================================================
+// AGENTE DE COBRANZA SOLFIUM v2.0
+// ----------------------------------------------------------------
+// Pega este script en la consola de Chrome (F12 > Console)
+// mientras tienes Zuno abierto en services.solfium.com
+// ================================================================
+
+const CONFIG = {
+  TOKEN: 'mEiTF63m2M0JSpFnnyunvY1AqyCa3m',
+  INSTALLER_ID: 2,
+  DRY_RUN: true,   // ← cambiar a false para enviar de verdad
+  DELAY_MS: 2000,
+};
+
+const BASE_DESK = 'https://services.solfium.com/solfapi/desk/api/auth';
+const BASE_CHAT = 'https://services.solfium.com/solfapi/chat/api/auth';
+
+const H = {
+  'Authorization': `Bearer ${CONFIG.TOKEN}`,
+  'Content-Type': 'application/json',
+  'Accept': 'application/json',
+};
+
+// ================================================================
+// CLIENTES — solo se envían los marcados aprobado: true
+// ================================================================
+const CLIENTES = [
+  {
+    proyectoId: 55313,
+    nombre: 'Juan',
+    escenario: 'C',
+    aprobado: true,
+    mensaje:
+`Hola Juan, soy Carla de Solfium 👋
+
+Revisé el historial de tu proyecto
+(ID: 55313) y quiero asegurarme de
+que todo quedó a tu entera satisfacción.
+
+Entiendo que tuviste observaciones con
+algunos detalles del proceso — me alegra
+saber que ya fueron atendidos.
+
+Me gustaría platicar contigo sobre el
+saldo pendiente de tu proyecto y
+encontrar juntos la mejor solución.
+¿Tienes disponibilidad esta semana?
+
+🌞 — Carla, Solfium`,
+  },
+  {
+    proyectoId: 56080,
+    nombre: 'Margie',
+    escenario: 'D',
+    aprobado: true,
+    mensaje:
+`Hola Margie, soy Carla de Solfium 👋
+
+Te escribo nuevamente respecto a tu
+proyecto solar (ID: 56080) que tiene
+un saldo pendiente de $25,218 MXN.
+
+Tu sistema está activo y generando un
+35% de ahorro en tu recibo de CFE ⚡
+
+¿Pudiste revisar nuestros mensajes anteriores?
+Con gusto te ayudo a resolver esto.
+¿Cuándo podrías realizar el pago?
+
+🌞 — Carla, Solfium`,
+  },
+  {
+    proyectoId: 36828,
+    nombre: 'César',
+    escenario: 'C',
+    aprobado: false,
+    nota: 'Conflicto severo — pendiente aprobación Carla',
+  },
+  {
+    proyectoId: 49959,
+    nombre: 'José María',
+    escenario: 'A',
+    aprobado: false,
+    nota: 'Alianza (Veronica Marin) — pendiente aprobación Carla',
+  },
+  {
+    proyectoId: 57444,
+    nombre: 'Mario',
+    escenario: 'A',
+    aprobado: false,
+    nota: 'Alianza (Jesus Gutierrez) — pendiente aprobación Carla',
+  },
+];
+
+// ================================================================
+// API HELPERS
+// ================================================================
+async function buscarCliente(proyectoId) {
+  const url = `${BASE_DESK}/clients/?page=1&quickfiltersearch=${proyectoId}&pagesize=5&buttonFilter=`;
+  const res = await fetch(url, { headers: H });
+  if (!res.ok) throw new Error(`HTTP ${res.status} buscando cliente ${proyectoId}`);
+  return res.json();
+}
+
+async function obtenerChat(clienteId) {
+  const url = `${BASE_DESK}/chats?clientID=${clienteId}&installerID=${CONFIG.INSTALLER_ID}&use_loading=false`;
+  const res = await fetch(url, { headers: H });
+  if (!res.ok) throw new Error(`HTTP ${res.status} obteniendo chat de ${clienteId}`);
+  return res.json();
+}
+
+async function enviarMensaje(roomId, userId, mensaje) {
+  if (CONFIG.DRY_RUN) {
+    console.log(`%c[DRY RUN] Mensaje para room_id=${roomId} user_id=${userId}:\n${mensaje}`, 'color: orange');
+    return { dry_run: true, room_id: roomId, user_id: userId };
+  }
+  const res = await fetch(`${BASE_CHAT}/chats/`, {
+    method: 'POST',
+    headers: H,
+    body: JSON.stringify({ room_id: roomId, user_id: userId, message: mensaje }),
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`HTTP ${res.status} enviando mensaje — ${txt}`);
+  }
+  return res.json();
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ================================================================
+// EXTRAE room_id y user_id de la respuesta del chat
+// ================================================================
+function extraerChatIds(chatData) {
+  // Intenta distintos formatos de respuesta
+  if (chatData.room_id && chatData.user_id) {
+    return { roomId: chatData.room_id, userId: chatData.user_id };
+  }
+  if (Array.isArray(chatData) && chatData.length > 0) {
+    const c = chatData[0];
+    if (c.room_id && c.user_id) return { roomId: c.room_id, userId: c.user_id };
+  }
+  if (chatData.results && chatData.results.length > 0) {
+    const c = chatData.results[0];
+    if (c.room_id && c.user_id) return { roomId: c.room_id, userId: c.user_id };
+  }
+  return null;
+}
+
+// ================================================================
+// EXTRAE el ID interno del cliente desde la búsqueda
+// ================================================================
+function extraerClienteId(searchData, proyectoId) {
+  const results = searchData.results || searchData;
+  if (Array.isArray(results) && results.length > 0) {
+    // Preferir el que coincide exactamente con el proyecto ID
+    const match = results.find(r =>
+      r.project_id === proyectoId ||
+      r.id === proyectoId ||
+      String(r.project_id) === String(proyectoId)
+    ) || results[0];
+    return match.client_id || match.clientid || match.id;
+  }
+  return proyectoId; // fallback: usar el proyecto ID directamente
+}
+
+// ================================================================
+// PROCESO PRINCIPAL POR CLIENTE
+// ================================================================
+async function procesarCliente(cliente) {
+  const tag = `ID ${cliente.proyectoId} (${cliente.nombre})`;
+
+  if (!cliente.aprobado) {
+    console.log(`%c⏸️  ${tag} — ${cliente.nota || 'Pendiente aprobación'}`, 'color: gray');
+    return { id: cliente.proyectoId, nombre: cliente.nombre, status: '⏸️ Pendiente' };
+  }
+
+  console.log(`%c\n🔄 Procesando: ${tag}`, 'color: dodgerblue; font-weight: bold');
+
+  try {
+    // 1. Buscar cliente y obtener ID interno
+    const searchData = await buscarCliente(cliente.proyectoId);
+    console.log(`   📋 Búsqueda:`, searchData);
+
+    const clienteId = extraerClienteId(searchData, cliente.proyectoId);
+    console.log(`   🆔 clienteId a usar en chat: ${clienteId}`);
+
+    // 2. Obtener datos del chat (room_id, user_id)
+    const chatData = await obtenerChat(clienteId);
+    console.log(`   💬 Chat data:`, chatData);
+
+    const ids = extraerChatIds(chatData);
+    if (!ids) {
+      console.warn(`   ⚠️  No se encontró room_id/user_id en la respuesta del chat`);
+      console.warn(`   ℹ️  Estructura recibida:`, JSON.stringify(chatData));
+      return { id: cliente.proyectoId, nombre: cliente.nombre, status: '❌ Sin room_id/user_id' };
+    }
+
+    console.log(`   ✉️  room_id=${ids.roomId} | user_id=${ids.userId}`);
+
+    // 3. Enviar mensaje
+    const resultado = await enviarMensaje(ids.roomId, ids.userId, cliente.mensaje);
+    console.log(`   ✅ Respuesta envío:`, resultado);
+
+    return { id: cliente.proyectoId, nombre: cliente.nombre, status: '✅ Enviado' };
+
+  } catch (err) {
+    console.error(`   ❌ Error:`, err.message);
+    return { id: cliente.proyectoId, nombre: cliente.nombre, status: `❌ ${err.message}` };
+  }
+}
+
+// ================================================================
+// RUNNER
+// ================================================================
+async function correrAgente() {
+  console.clear();
+  console.log('%c═══════════════════════════════════════════', 'color: #2ecc71');
+  console.log('%c  🤖 AGENTE DE COBRANZA SOLFIUM v2.0', 'color: #2ecc71; font-weight: bold');
+  console.log(`%c  Modo: ${CONFIG.DRY_RUN ? '🔍 SIMULACIÓN (DRY RUN)' : '🚀 ENVÍO REAL'}`, CONFIG.DRY_RUN ? 'color: orange' : 'color: #e74c3c; font-weight: bold');
+  console.log('%c═══════════════════════════════════════════\n', 'color: #2ecc71');
+
+  const resultados = [];
+
+  for (const cliente of CLIENTES) {
+    const r = await procesarCliente(cliente);
+    resultados.push(r);
+    await sleep(CONFIG.DELAY_MS);
+  }
+
+  console.log('\n%c═══════════════════════════════════════════', 'color: #2ecc71');
+  console.log('%c  📊 RESUMEN FINAL', 'color: #2ecc71; font-weight: bold');
+  console.log('%c═══════════════════════════════════════════', 'color: #2ecc71');
+  resultados.forEach(r => console.log(`  ${r.id} — ${r.nombre}: ${r.status}`));
+  console.log('%c═══════════════════════════════════════════', 'color: #2ecc71');
+}
+
+correrAgente().catch(err => console.error('Error crítico:', err));
